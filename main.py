@@ -1,16 +1,17 @@
 import os
 from pathlib import Path
 from uuid import uuid4
+
 from fastapi import FastAPI, UploadFile, Form, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+
 from db import SessionLocal, init_db, Invoice
 
 app = FastAPI()
 
-
-# Allow CORS (optional, useful for frontends)
+# Enable CORS for all (adjust for production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,15 +20,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
-UPLOAD_FOLDER = Path("invoices")
+# Ensure upload folders exist
+UPLOAD_FOLDER = Path("uploads")
 UPLOAD_FOLDER.mkdir(exist_ok=True)
+
+RECEIPT_FOLDER = UPLOAD_FOLDER / "receipts"
+RECEIPT_FOLDER.mkdir(exist_ok=True)
+
+INVOICE_FOLDER = UPLOAD_FOLDER / "invoices"
+INVOICE_FOLDER.mkdir(exist_ok=True)
 
 init_db()
 
-
-
-# Dependency to get DB session
+# DB Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -35,53 +40,103 @@ def get_db():
     finally:
         db.close()
 
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
+def allowed_file(filename: str, allowed_exts):
+    ext = Path(filename).suffix.lower()
+    return ext in allowed_exts
 
-# Helper to check file type
-def is_pdf(filename: str):
-    return filename.lower().endswith(".pdf")
-
-
-@app.post("/upload")
-async def upload_invoice(
-    clientname: str = Form(...),
-    invoice: UploadFile = File(...),
+@app.post("/income")
+async def create_income(
+    name: str = Form(...),
+    amount: float = Form(...),
+    date: str = Form(...),
     source: str = Form(...),
+    notes: str = Form(""),
+    invoice: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
-    if not is_pdf(invoice.filename):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    filename = None
+    if invoice:
+        if not allowed_file(invoice.filename, {".pdf", ".jpg", ".jpeg", ".png"}):
+            raise HTTPException(status_code=400, detail="Invalid file type for invoice. Allowed: PDF, JPG, PNG")
+        ext = Path(invoice.filename).suffix
+        filename = f"{uuid4().hex}{ext}"
+        file_path = INVOICE_FOLDER / filename
+        with open(file_path, "wb") as f:
+            f.write(await invoice.read())
 
-    # Save file with unique name
-    file_ext = Path(invoice.filename).suffix
-    unique_filename = f"{uuid4().hex}{file_ext}"
-    file_path = UPLOAD_FOLDER / unique_filename
-
-    with open(file_path, "wb") as f:
-        f.write(await invoice.read())
-
-    # Save metadata to DB
-    new_invoice = Invoice(clientname=clientname,source=source, filename=unique_filename)
+    new_invoice = Invoice(
+        name=name,
+        amount=amount,
+        date=date,
+        type="income",
+        source_or_category=source,
+        payment_method=None,
+        notes=notes,
+        filename=filename
+    )
     db.add(new_invoice)
     db.commit()
     db.refresh(new_invoice)
 
-    return JSONResponse(
-        content={"message": "Invoice uploaded successfully", "invoice_id": new_invoice.id},
-        status_code=201
+    return JSONResponse(content={"message": "Income saved successfully", "id": new_invoice.id}, status_code=201)
+
+
+@app.post("/expenses")
+async def create_expense(
+    name: str = Form(...),
+    amount: float = Form(...),
+    date: str = Form(...),
+    category: str = Form(...),
+    payment: str = Form(...),
+    notes: str = Form(""),
+    receipt: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    filename = None
+    if receipt:
+        if not allowed_file(receipt.filename, {".pdf", ".jpg", ".jpeg", ".png"}):
+            raise HTTPException(status_code=400, detail="Invalid file type for receipt. Allowed: PDF, JPG, PNG")
+        ext = Path(receipt.filename).suffix
+        filename = f"{uuid4().hex}{ext}"
+        file_path = RECEIPT_FOLDER / filename
+        with open(file_path, "wb") as f:
+            f.write(await receipt.read())
+
+    new_expense = Invoice(
+        name=name,
+        amount=amount,
+        date=date,
+        type="expense",
+        source_or_category=category,
+        payment_method=payment,
+        notes=notes,
+        filename=filename
     )
+    db.add(new_expense)
+    db.commit()
+    db.refresh(new_expense)
+
+    return JSONResponse(content={"message": "Expense saved successfully", "id": new_expense.id}, status_code=201)
 
 @app.get("/invoices")
 def list_invoices(db: Session = Depends(get_db)):
-    invoices = db.query(Invoice).all()
+    invoices = db.query(Invoice).order_by(Invoice.uploaded_at.desc()).all()
     return [
         {
-            "id": inv.id,
-            "clientname": inv.clientname,
-            "filename": inv.filename,
-            "uploaded_at": inv.uploaded_at.isoformat(),
-            "source": inv.source
-        } for inv in invoices
+            "id": i.id,
+            "name": i.name,
+            "amount": i.amount,
+            "type": i.type,
+            "date": i.date,
+            "source_or_category": i.source_or_category,
+            "payment_method": i.payment_method,
+            "notes": i.notes,
+            "filename": i.filename,
+            "uploaded_at": i.uploaded_at.isoformat()
+        }
+        for i in invoices
     ]
+
+@app.get("/")
+def root():
+    return {"message": "Welcome to the Invoice API"}
