@@ -37,11 +37,23 @@ This project is a FastAPI backend for uploading and managing invoices. It provid
 
 4.  **Run the application:**
     ```bash
-    uvicorn main:app --reload
+    fastapi run
     ```
-    The application will be running at `http://127.0.0.1:8000`.
+    The application will be running at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 ## API Endpoints
+
+### Swagger UI
+
+The Swagger UI is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+
+### Redoc UI
+
+The Redoc UI is available at [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc).
+
+### openapi.json
+
+The openapi.json file is available at [http://127.0.0.1:8000/openapi.json](http://127.0.0.1:8000/openapi.json).
 
 ### `POST /upload`
 
